@@ -3,51 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Pro Viewer - Auto-Layout Edition</title>
+    <title>3D Pro Viewer - Final Edition</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="https://unpkg.com/page-flip/dist/js/page-flip.browser.js"></script>
     <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { background: #020617; color: #f1f5f9; font-family: sans-serif; overflow: hidden; }
-        #book-container { 
-            width: 100vw; 
-            height: 85vh; 
-            display: flex; 
-            justify-content: center; 
-            align-items: center;
-            perspective: 2000px; /* Enhanced 3D depth */
-        }
-        canvas { 
-            background: white; 
-            box-shadow: 0 20px 50px rgba(0,0,0,0.8); 
-        }
-        /* Style for the "Spine" look */
-        .page { background-color: #eee; }
+        #book-container { width: 100vw; height: 85vh; display: flex; justify-content: center; align-items: center; perspective: 3000px; }
+        canvas { background: white; box-shadow: 0 20px 60px rgba(0,0,0,0.9); }
+        .page { background-color: #fff; display: flex; justify-content: center; align-items: center; }
         .shelf-item { background: #1e293b; border: 1px solid #334155; border-radius: 4px; cursor: pointer; }
     </style>
 </head>
 <body>
 
     <div id="view-shelf" class="p-10 h-screen overflow-y-auto">
-        <h1 class="text-3xl font-bold border-b border-slate-800 pb-4 mb-8">Industrial 3D Library</h1>
-        <label class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded font-bold cursor-pointer inline-block mb-10">
-            + UPLOAD PDF
+        <h1 class="text-3xl font-bold border-b border-slate-800 pb-4 mb-8 text-blue-400">Pro Document Library</h1>
+        <label class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded font-bold cursor-pointer inline-block mb-10 transition-all">
+            + UPLOAD DOCUMENT
             <input type="file" id="file-input" accept="application/pdf" class="hidden">
         </label>
         <div id="shelf-list" class="grid grid-cols-2 md:grid-cols-5 gap-6"></div>
     </div>
 
     <div id="view-reader" class="hidden h-screen flex flex-col">
-        <div class="bg-slate-900 p-4 border-b border-slate-800 flex justify-between items-center">
+        <div class="bg-slate-900 p-4 border-b border-slate-800 flex justify-between items-center z-50">
             <button onclick="location.reload()" class="text-slate-400 hover:text-white font-bold text-sm">← CLOSE</button>
-            <span id="page-indicator" class="text-xs font-mono text-slate-500 uppercase tracking-widest">3D Rendering Mode</span>
-            <div class="w-20"></div>
+            <span id="format-tag" class="text-xs font-mono text-blue-500 uppercase tracking-widest">Detecting Format...</span>
+            <div class="w-10"></div>
         </div>
         <div id="book-container">
             <div id="flipbook"></div>
         </div>
     </div>
+
+    <audio id="flip-audio" preload="auto">
+        <source src="https://www.soundjay.com/misc/sounds/page-flip-01a.mp3" type="audio/mpeg">
+    </audio>
 
     <script>
         const db = new Dexie("ProFlipbookDB");
@@ -55,12 +48,13 @@
 
         const fileInput = document.getElementById('file-input');
         const shelfList = document.getElementById('shelf-list');
+        const flipAudio = document.getElementById('flip-audio');
 
         async function renderShelf() {
             const books = await db.books.toArray();
             shelfList.innerHTML = books.map(b => `
                 <div class="shelf-item p-4" onclick="openBook(${b.id})">
-                    <div class="aspect-[3/4] bg-slate-800 mb-2 rounded shadow-inner flex items-center justify-center text-slate-600 italic">PDF</div>
+                    <div class="aspect-[3/4] bg-slate-800 mb-2 rounded shadow-inner flex items-center justify-center text-slate-500 font-bold">PDF</div>
                     <div class="text-xs font-bold truncate">${b.name}</div>
                 </div>
             `).join('');
@@ -78,6 +72,9 @@
         };
 
         async function openBook(id) {
+            // UNLOCK AUDIO for browser
+            flipAudio.play().then(() => { flipAudio.pause(); flipAudio.currentTime = 0; }).catch(e => console.log("Audio waiting..."));
+
             const book = await db.books.get(id);
             document.getElementById('view-shelf').classList.add('hidden');
             document.getElementById('view-reader').classList.remove('hidden');
@@ -85,17 +82,28 @@
             const pdfData = new Uint8Array(book.data);
             const pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
             const flipbookEl = document.getElementById('flipbook');
+            flipbookEl.innerHTML = ''; // Clear
 
-            // 1. DETECTION LOGIC: Get the first page to determine layout
+            // 1. IMPROVED DETECTION
             const firstPage = await pdf.getPage(1);
-            const initialViewport = firstPage.getViewport({ scale: 1 });
-            const isLandscape = initialViewport.width > initialViewport.height;
+            const view = firstPage.getViewport({ scale: 1 });
+            const isLandscape = view.width > view.height;
             
-            // Set dimensions based on detected format
-            let bookWidth = isLandscape ? 800 : 550;
-            let bookHeight = isLandscape ? 600 : 800;
+            document.getElementById('format-tag').innerText = isLandscape ? "Format: Landscape" : "Format: Portrait";
 
-            // 2. RENDER PAGES
+            // Set visual dimensions - Landscape needs more width
+            const screenW = window.innerWidth;
+            const screenH = window.innerHeight;
+            let bookW = isLandscape ? (screenW * 0.8) : 550;
+            let bookH = isLandscape ? (bookW * (view.height / view.width)) : 800;
+
+            // Ensure it doesn't overflow screen height
+            if (bookH > screenH * 0.75) {
+                bookH = screenH * 0.75;
+                bookW = isLandscape ? (bookH * (view.width / view.height)) : 550;
+            }
+
+            // 2. RENDER
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
                 const viewport = page.getViewport({ scale: 2 });
@@ -106,25 +114,31 @@
                 await page.render({ canvasContext: context, viewport }).promise;
 
                 const pageDiv = document.createElement('div');
-                pageDiv.className = "page";
+                pageDiv.className = "page shadow-2xl";
+                canvas.style.width = "100%";
+                canvas.style.height = "100%";
                 pageDiv.appendChild(canvas);
                 flipbookEl.appendChild(pageDiv);
             }
 
-            // 3. ENHANCED 3D SETTINGS
+            // 3. 3D INITIALIZATION
             const pageFlip = new St.PageFlip(flipbookEl, {
-                width: bookWidth,
-                height: bookHeight,
+                width: isLandscape ? bookW / 2 : bookW, // If landscape, width is for ONE page in spread
+                height: bookH,
                 size: "stretch",
                 showCover: true,
-                maxShadowOpacity: 0.8,      // Darker shadows for 3D realism
-                flippingTime: 1000,         // Smoother, weightier flip
-                drawShadow: true,           // Ensures 3D shadows are visible
-                usePortrait: !isLandscape,  // Auto-switch view mode
-                startPage: 0
+                usePortrait: !isLandscape, // Forced single page for portrait, double for landscape
+                maxShadowOpacity: 0.7,
+                showZIndex: true
             });
 
             pageFlip.loadFromHTML(document.querySelectorAll(".page"));
+
+            // 4. THE SOUND TRIGGER
+            pageFlip.on('flip', (e) => {
+                flipAudio.currentTime = 0;
+                flipAudio.play();
+            });
         }
 
         renderShelf();
