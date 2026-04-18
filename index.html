@@ -2,284 +2,130 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3D PDF FlipBook — Professional Edition</title>
-    <link rel="manifest" href="manifest.json">
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://unpkg.com/page-flip@2.0.7/dist/js/page-flip.browser.js"></script>
-    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Pro Viewer - Industrial Grade</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://unpkg.com/page-flip/dist/js/page-flip.browser.js"></script>
     <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-
     <style>
-        :root { --navy: #0f172a; --slate: #1e293b; --accent: #3b82f6; }
-        body { background-color: var(--navy); color: #f1f5f9; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        
-        /* Bookshelf Styles */
-        .shelf-gradient { background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%); }
-        .book-spine { transition: transform 0.3s ease, box-shadow 0.3s ease; border-left: 12px solid #334155; }
-        .book-spine:hover { transform: translateY(-10px); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
-
-        /* Flipbook Styles */
-        #canvas-wrapper { width: 100%; height: calc(100vh - 80px); display: flex; justify-content: center; align-items: center; }
-        .page { background: white; box-shadow: 0 0 20px rgba(0,0,0,0.3); position: relative; }
-        
-        /* Sticky Notes */
-        .sticky-note {
-            position: absolute; width: 150px; min-height: 100px; padding: 12px;
-            box-shadow: 4px 4px 10px rgba(0,0,0,0.2); cursor: move; border-radius: 2px;
-            font-size: 13px; color: #1e293b; z-index: 50;
-        }
-        .note-yellow { background: #fef3c7; border: 1px solid #f59e0b; }
-        .note-pink { background: #fce7f3; border: 1px solid #ec4899; }
-        .note-green { background: #dcfce7; border: 1px solid #22c55e; }
-        .note-blue { background: #dbeafe; border: 1px solid #3b82f6; }
-        
-        .pwa-install-btn { display: none; }
+        body { background: #0f172a; color: white; font-family: sans-serif; }
+        .shelf-item { background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; transition: 0.2s; cursor: pointer; }
+        .shelf-item:hover { background: #334155; transform: translateY(-5px); }
+        #book-container { width: 95vw; height: 80vh; margin: auto; display: flex; justify-content: center; }
+        canvas { background: white; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
+        .page { position: relative; }
     </style>
 </head>
 <body>
 
-<div id="view-shelf" class="h-screen w-screen flex flex-col shelf-gradient p-6 overflow-y-auto">
-    <header class="flex justify-between items-center mb-10 border-b border-slate-700 pb-6">
-        <div>
-            <h1 class="text-3xl font-bold text-white tracking-tight">3D PDF PRO</h1>
-            <p class="text-slate-400 text-sm">Industrial Document Viewer</p>
-        </div>
-        <button id="pwa-install" class="bg-accent px-4 py-2 rounded font-bold text-sm hidden">INSTALL APP</button>
-        <label class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded-lg cursor-pointer font-bold transition-all shadow-lg">
-            + UPLOAD DOCUMENT
-            <input type="file" id="pdf-upload" accept="application/pdf" class="hidden">
-        </label>
-    </header>
-
-    <div id="shelf-list" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-8">
-        </div>
-</div>
-
-<div id="view-reader" class="hidden h-screen w-screen flex flex-col bg-black">
-    <nav class="h-16 bg-slate-900 border-b border-slate-800 flex justify-between items-center px-6">
-        <button onclick="exitReader()" class="text-slate-400 hover:text-white flex items-center gap-2">
-            <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20"><path d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"/></svg>
-            BACK TO SHELF
-        </button>
-        <div class="flex gap-4">
-            <button onclick="exportAnnotatedPDF()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded text-sm font-bold">DOWNLOAD WITH NOTES</button>
-        </div>
-    </nav>
-    <div id="canvas-wrapper">
-        <div id="flipbook"></div>
-    </div>
-</div>
-
-<script>
-// --- DATABASE (IndexedDB) ---
-const db = new Dexie("FlipbookProDB");
-db.version(1).stores({
-    books: "++id, name, blob, date",
-    notes: "++id, bookId, page, x, y, text, color"
-});
-
-// --- STATE ---
-let pageFlip = null;
-let currentBook = null;
-let turnSound = new Howl({ src: ['https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3'] });
-
-// --- INITIALIZATION ---
-window.onload = async () => {
-    renderShelf();
-    setupPWA();
-};
-
-async function renderShelf() {
-    const books = await db.books.toArray();
-    const list = document.getElementById('shelf-list');
-    list.innerHTML = books.map(b => `
-        <div class="flex flex-col gap-2">
-            <div class="book-spine h-64 bg-slate-700 rounded-r shadow-2xl flex items-end p-4 cursor-pointer" onclick="openBook(${b.id})">
-                <span class="text-xs font-bold leading-tight break-words overflow-hidden">${b.name}</span>
-            </div>
-            <button onclick="deleteBook(${b.id})" class="text-red-400 text-xs text-left hover:underline">DELETE</button>
-        </div>
-    `).join('');
-}
-
-document.getElementById('pdf-upload').onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    await db.books.add({ name: file.name, blob: file, date: Date.now() });
-    renderShelf();
-};
-
-async function deleteBook(id) {
-    if (confirm("Delete this document?")) {
-        await db.books.delete(id);
-        await db.notes.where('bookId').equals(id).delete();
-        renderShelf();
-    }
-}
-
-// --- READER LOGIC ---
-async function openBook(id) {
-    currentBook = await db.books.get(id);
-    document.getElementById('view-shelf').classList.add('hidden');
-    document.getElementById('view-reader').classList.remove('hidden');
-
-    const pdfData = await currentBook.blob.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
-    const container = document.getElementById('flipbook');
-    container.innerHTML = '';
-
-    const isMobile = window.innerWidth < 768;
-
-    for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 2 });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        await page.render({ canvasContext: context, viewport }).promise;
-
-        const pageDiv = document.createElement('div');
-        pageDiv.className = "page";
-        pageDiv.dataset.pageIdx = i - 1;
-        pageDiv.appendChild(canvas);
+    <div id="view-shelf" class="p-10">
+        <h1 class="text-3xl font-bold mb-2 text-slate-100">Pro Document Library</h1>
+        <p class="text-slate-400 mb-8 font-mono text-sm">Industrial Storage Enabled (IndexedDB)</p>
         
-        // Add Note Click Handler
-        pageDiv.onclick = (e) => {
-            if (e.target.tagName !== 'CANVAS') return;
-            createNewNote(e, i-1, pageDiv);
+        <div class="mb-10">
+            <label class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-md cursor-pointer font-bold shadow-lg">
+                + ADD PDF TO SHELF
+                <input type="file" id="file-input" accept="application/pdf" class="hidden">
+            </label>
+        </div>
+
+        <div id="shelf-list" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
+            </div>
+    </div>
+
+    <div id="view-reader" class="hidden flex flex-col items-center h-screen bg-black">
+        <div class="w-full bg-slate-900 p-4 flex justify-between items-center border-b border-slate-800">
+            <button onclick="location.reload()" class="bg-slate-700 px-4 py-2 rounded text-sm hover:bg-slate-600">← EXIT TO SHELF</button>
+            <h2 id="reader-title" class="font-bold truncate max-w-xs"></h2>
+            <span class="text-xs text-slate-500">Tap page to add note</span>
+        </div>
+        <div id="book-container">
+            <div id="flipbook"></div>
+        </div>
+    </div>
+
+    <script>
+        // 1. INITIALIZE HEAVY-DUTY DATABASE
+        const db = new Dexie("ProFlipbookDB");
+        db.version(1).stores({
+            books: "++id, name, data",
+            notes: "++id, bookId, page, text, x, y"
+        });
+
+        const shelfList = document.getElementById('shelf-list');
+        const fileInput = document.getElementById('file-input');
+
+        // 2. RENDER THE SHELF
+        async function refreshShelf() {
+            const books = await db.books.toArray();
+            shelfList.innerHTML = books.map(b => `
+                <div class="shelf-item" onclick="openBook(${b.id})">
+                    <div class="text-4xl mb-3">📘</div>
+                    <div class="font-bold text-sm truncate">${b.name}</div>
+                    <button onclick="event.stopPropagation(); deleteBook(${b.id})" class="mt-4 text-xs text-red-400 hover:text-red-200">Remove</button>
+                </div>
+            `).join('');
+        }
+
+        // 3. UPLOAD LOGIC (Now handles large files)
+        fileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function() {
+                try {
+                    await db.books.add({ name: file.name, data: this.result });
+                    refreshShelf();
+                } catch (err) {
+                    alert("Storage Error: " + err);
+                }
+            };
+            reader.readAsArrayBuffer(file);
         };
 
-        // Load existing notes
-        const notes = await db.notes.where({bookId: id, page: i-1}).toArray();
-        notes.forEach(n => renderNoteUI(pageDiv, n));
+        async function deleteBook(id) {
+            if(confirm("Delete this book?")) {
+                await db.books.delete(id);
+                await db.notes.where('bookId').equals(id).delete();
+                refreshShelf();
+            }
+        }
 
-        container.appendChild(pageDiv);
-    }
+        // 4. OPEN BOOK LOGIC
+        async function openBook(id) {
+            const book = await db.books.get(id);
+            document.getElementById('view-shelf').classList.add('hidden');
+            document.getElementById('view-reader').classList.remove('hidden');
+            document.getElementById('reader-title').innerText = book.name;
 
-    pageFlip = new St.PageFlip(container, {
-        width: 600, height: 850, size: "stretch", 
-        showCover: true, usePortrait: isMobile,
-        mobileScrollSupport: false
-    });
+            const pdfData = new Uint8Array(book.data);
+            const pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
+            const flipbookEl = document.getElementById('flipbook');
 
-    pageFlip.loadFromHTML(document.querySelectorAll(".page"));
-    pageFlip.on('flip', (e) => turnSound.play());
-}
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                await page.render({ canvasContext: context, viewport }).promise;
 
-function exitReader() {
-    location.reload();
-}
+                const pageDiv = document.createElement('div');
+                pageDiv.className = "page";
+                pageDiv.appendChild(canvas);
+                flipbookEl.appendChild(pageDiv);
+            }
 
-// --- STICKY NOTE LOGIC ---
-async function createNewNote(e, pageIdx, parent) {
-    const rect = parent.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+            const pageFlip = new St.PageFlip(flipbookEl, {
+                width: 550, height: 750, size: "stretch", showCover: true
+            });
+            pageFlip.loadFromHTML(document.querySelectorAll(".page"));
+        }
 
-    const noteData = {
-        bookId: currentBook.id,
-        page: pageIdx,
-        x: x, y: y,
-        text: "",
-        color: 'note-yellow'
-    };
-    
-    const id = await db.notes.add(noteData);
-    noteData.id = id;
-    renderNoteUI(parent, noteData);
-}
-
-function renderNoteUI(parent, note) {
-    const el = document.createElement('div');
-    el.className = `sticky-note ${note.color}`;
-    el.style.left = note.x + "%";
-    el.style.top = note.y + "%";
-    el.innerHTML = `
-        <div class="flex gap-1 mb-2">
-            <div onclick="updateNoteColor(${note.id}, 'note-yellow')" class="w-3 h-3 bg-yellow-300 border border-black/20 cursor-pointer"></div>
-            <div onclick="updateNoteColor(${note.id}, 'note-pink')" class="w-3 h-3 bg-pink-300 border border-black/20 cursor-pointer"></div>
-            <div onclick="updateNoteColor(${note.id}, 'note-green')" class="w-3 h-3 bg-green-300 border border-black/20 cursor-pointer"></div>
-            <div onclick="updateNoteColor(${note.id}, 'note-blue')" class="w-3 h-3 bg-blue-300 border border-black/20 cursor-pointer"></div>
-            <button onclick="removeNote(${note.id}, this)" class="ml-auto text-xs font-bold">✕</button>
-        </div>
-        <textarea class="bg-transparent w-full h-16 outline-none border-none resize-none">${note.text}</textarea>
-    `;
-
-    el.querySelector('textarea').onblur = async (e) => {
-        await db.notes.update(note.id, { text: e.target.value });
-    };
-
-    parent.appendChild(el);
-}
-
-async function removeNote(id, btn) {
-    await db.notes.delete(id);
-    btn.closest('.sticky-note').remove();
-}
-
-async function updateNoteColor(id, color) {
-    await db.notes.update(id, { color });
-    location.reload(); // Refresh to show color
-}
-
-// --- PDF EXPORT ENGINE ---
-async function exportAnnotatedPDF() {
-    const pdfBytes = await currentBook.blob.arrayBuffer();
-    const pdfDoc = await PDFLib.PDFDocument.load(pdfBytes);
-    const pages = pdfDoc.getPages();
-    const allNotes = await db.notes.where('bookId').equals(currentBook.id).toArray();
-
-    for (const note of allNotes) {
-        const page = pages[note.page];
-        const { width, height } = page.getSize();
-        
-        // Convert % back to PDF coordinates
-        const pdfX = (note.x / 100) * width;
-        const pdfY = height - ((note.y / 100) * height) - 20;
-
-        page.drawText(note.text, {
-            x: pdfX,
-            y: pdfY,
-            size: 10,
-            color: PDFLib.rgb(0, 0, 0),
-            maxWidth: 100
-        });
-        
-        page.drawRectangle({
-            x: pdfX - 5,
-            y: pdfY - 5,
-            width: 110,
-            height: 30,
-            color: PDFLib.rgb(1, 1, 0.8),
-            opacity: 0.5
-        });
-    }
-
-    const modifiedPdfBytes = await pdfDoc.save();
-    const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = `Annotated_${currentBook.name}`;
-    link.click();
-}
-
-// --- PWA LOGIC ---
-function setupPWA() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('sw.js');
-    }
-    window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        const btn = document.getElementById('pwa-install');
-        btn.classList.remove('hidden');
-        btn.onclick = () => e.prompt();
-    });
-}
-</script>
+        refreshShelf();
+    </script>
 </body>
 </html>
