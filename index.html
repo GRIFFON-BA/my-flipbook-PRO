@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Pro Flipbook</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://unpkg.com/page-flip/dist/js/page-flip.browser.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #0f172a; color: white; }
+        #canvas-container { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .page-card { background: white; border: 1px solid #ddd; }
+    </style>
+</head>
+<body class="flex flex-col items-center p-5">
+    <h1 class="text-2xl font-bold mb-5 text-blue-400">Professional PDF Flipbook</h1>
+    
+    <div id="upload-zone" class="border-2 border-dashed border-slate-500 p-10 rounded-lg mb-10 text-center cursor-pointer hover:bg-slate-800 transition">
+        <p>Click to Upload your PDF (Blueprints, Manuals, etc.)</p>
+        <input type="file" id="file-input" accept="application/pdf" class="hidden">
+    </div>
+
+    <div id="book-wrapper" class="hidden">
+        <div id="flipbook" class="mx-auto"></div>
+        <div class="mt-5 flex gap-4">
+            <button onclick="location.reload()" class="bg-slate-700 px-4 py-2 rounded">Back to Bookshelf</button>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('file-input');
+        const uploadZone = document.getElementById('upload-zone');
+        
+        uploadZone.onclick = () => fileInput.click();
+
+        fileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            uploadZone.classList.add('hidden');
+            document.getElementById('book-wrapper').classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = async function() {
+                const typedarray = new Uint8Array(this.result);
+                const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                const flipbookEl = document.getElementById('flipbook');
+                
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const viewport = page.getViewport({ scale: 1.5 });
+                    const canvas = document.createElement('canvas');
+                    canvas.className = "page-card";
+                    const context = canvas.getContext('2d');
+                    canvas.height = viewport.height;
+                    canvas.width = viewport.width;
+                    await page.render({ canvasContext: context, viewport }).promise;
+                    
+                    const pageDiv = document.createElement('div');
+                    pageDiv.className = "page";
+                    pageDiv.appendChild(canvas);
+                    flipbookEl.appendChild(pageDiv);
+                }
+
+                const pageFlip = new St.PageFlip(flipbookEl, {
+                    width: 600, height: 800, size: "stretch",
+                    showCover: true
+                });
+                pageFlip.loadFromHTML(document.querySelectorAll(".page"));
+            };
+            reader.readAsArrayBuffer(file);
+        };
+    </script>
+</body>
+</html>
