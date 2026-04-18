@@ -3,74 +3,190 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Pro Flipbook</title>
+    <title>3D Pro Flipbook - Full Suite</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="https://unpkg.com/page-flip/dist/js/page-flip.browser.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #0f172a; color: white; }
-        #canvas-container { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-        .page-card { background: white; border: 1px solid #ddd; }
+        body { background: #0f172a; color: white; font-family: sans-serif; }
+        .bookshelf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px; padding: 20px; }
+        .book-card { background: #1e293b; border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; border: 1px solid #334155; }
+        .book-card:hover { background: #334155; }
+        #book-container { width: 95vw; height: 70vh; margin: auto; display: flex; justify-content: center; }
+        canvas { background: white; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .sticky-note {
+            position: absolute; width: 120px; min-height: 80px; padding: 10px;
+            background: #fef3c7; color: black; font-size: 12px; border-radius: 2px;
+            box-shadow: 5px 5px 10px rgba(0,0,0,0.2); cursor: move; z-index: 1000;
+        }
+        .page { position: relative; }
     </style>
 </head>
-<body class="flex flex-col items-center p-5">
-    <h1 class="text-2xl font-bold mb-5 text-blue-400">Professional PDF Flipbook</h1>
-    
-    <div id="upload-zone" class="border-2 border-dashed border-slate-500 p-10 rounded-lg mb-10 text-center cursor-pointer hover:bg-slate-800 transition">
-        <p>Click to Upload your PDF (Blueprints, Manuals, etc.)</p>
-        <input type="file" id="file-input" accept="application/pdf" class="hidden">
+<body>
+
+    <div id="view-shelf" class="p-8">
+        <h1 class="text-3xl font-bold mb-8 text-slate-200 border-b border-slate-700 pb-4">Professional Bookshelf</h1>
+        <div class="mb-8">
+            <label class="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-lg cursor-pointer font-bold transition">
+                + Upload New PDF
+                <input type="file" id="file-input" accept="application/pdf" class="hidden">
+            </label>
+        </div>
+        <div id="bookshelf-list" class="bookshelf-grid">
+            </div>
     </div>
 
-    <div id="book-wrapper" class="hidden">
-        <div id="flipbook" class="mx-auto"></div>
-        <div class="mt-5 flex gap-4">
-            <button onclick="location.reload()" class="bg-slate-700 px-4 py-2 rounded">Back to Bookshelf</button>
+    <div id="view-reader" class="hidden flex flex-col items-center p-4">
+        <div class="w-full flex justify-between items-center mb-4 px-4">
+            <button onclick="closeBook()" class="bg-slate-700 px-4 py-2 rounded">← Back</button>
+            <h2 id="current-book-title" class="font-bold text-lg"></h2>
+            <p class="text-sm text-slate-400">Click page to add Sticky Note</p>
+        </div>
+        
+        <div id="book-container">
+            <div id="flipbook"></div>
         </div>
     </div>
 
+    <audio id="flip-sound" src="https://www.soundjay.com/misc/sounds/page-flip-01a.mp3"></audio>
+
     <script>
-        const fileInput = document.getElementById('file-input');
-        const uploadZone = document.getElementById('upload-zone');
-        
-        uploadZone.onclick = () => fileInput.click();
+        let currentBookId = null;
+        let pageFlip = null;
+        let currentPageIndex = 0;
 
-        fileInput.onchange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
+        // --- STORAGE LOGIC ---
+        // We save your books and notes in the browser's "LocalStorage"
+        function saveBook(name, data) {
+            const id = Date.now();
+            const books = JSON.parse(localStorage.getItem('my_books') || '[]');
+            books.push({ id, name, data }); // In a real app, we'd use a database for large files
+            localStorage.setItem('my_books', JSON.stringify(books));
+            renderBookshelf();
+        }
 
-            uploadZone.classList.add('hidden');
-            document.getElementById('book-wrapper').classList.remove('hidden');
+        function renderBookshelf() {
+            const books = JSON.parse(localStorage.getItem('my_books') || '[]');
+            const list = document.getElementById('bookshelf-list');
+            list.innerHTML = books.map(book => `
+                <div class="book-card" onclick="openBook(${book.id})">
+                    <div class="h-32 bg-slate-800 rounded mb-2 flex items-center justify-center text-4xl">📄</div>
+                    <div class="text-sm font-medium truncate">${book.name}</div>
+                </div>
+            `).join('');
+        }
 
-            const reader = new FileReader();
-            reader.onload = async function() {
-                const typedarray = new Uint8Array(this.result);
-                const pdf = await pdfjsLib.getDocument(typedarray).promise;
-                const flipbookEl = document.getElementById('flipbook');
+        // --- READER LOGIC ---
+        async function openBook(id) {
+            const books = JSON.parse(localStorage.getItem('my_books') || '[]');
+            const book = books.find(b => b.id === id);
+            if (!book) return;
+
+            currentBookId = id;
+            document.getElementById('view-shelf').classList.add('hidden');
+            document.getElementById('view-reader').classList.remove('hidden');
+            document.getElementById('current-book-title').innerText = book.name;
+
+            const loadingTask = pdfjsLib.getDocument(book.data);
+            const pdf = await loadingTask.promise;
+            const flipbookEl = document.getElementById('flipbook');
+            flipbookEl.innerHTML = ''; // Clear old pages
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 1.5 });
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+                await page.render({ canvasContext: context, viewport }).promise;
+
+                const pageDiv = document.createElement('div');
+                pageDiv.className = "page";
+                pageDiv.onclick = (e) => addNote(e, i-1);
+                pageDiv.appendChild(canvas);
                 
-                for (let i = 1; i <= pdf.numPages; i++) {
-                    const page = await pdf.getPage(i);
-                    const viewport = page.getViewport({ scale: 1.5 });
-                    const canvas = document.createElement('canvas');
-                    canvas.className = "page-card";
-                    const context = canvas.getContext('2d');
-                    canvas.height = viewport.height;
-                    canvas.width = viewport.width;
-                    await page.render({ canvasContext: context, viewport }).promise;
-                    
-                    const pageDiv = document.createElement('div');
-                    pageDiv.className = "page";
-                    pageDiv.appendChild(canvas);
-                    flipbookEl.appendChild(pageDiv);
-                }
+                // Load existing notes for this page
+                loadNotes(pageDiv, id, i-1);
 
-                const pageFlip = new St.PageFlip(flipbookEl, {
-                    width: 600, height: 800, size: "stretch",
-                    showCover: true
-                });
-                pageFlip.loadFromHTML(document.querySelectorAll(".page"));
+                flipbookEl.appendChild(pageDiv);
+            }
+
+            pageFlip = new St.PageFlip(flipbookEl, {
+                width: 550, height: 750, size: "stretch", showCover: true
+            });
+            pageFlip.loadFromHTML(document.querySelectorAll(".page"));
+            pageFlip.on('flip', (e) => { 
+                currentPageIndex = e.data;
+                document.getElementById('flip-sound').play(); 
+            });
+        }
+
+        function closeBook() {
+            location.reload(); // Simplest way to reset the state
+        }
+
+        // --- STICKY NOTE LOGIC ---
+        function addNote(e, pageIdx) {
+            if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+            
+            const rect = e.currentTarget.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const note = {
+                id: Date.now(),
+                bookId: currentBookId,
+                page: pageIdx,
+                x: x,
+                y: y,
+                text: ""
             };
-            reader.readAsArrayBuffer(file);
+
+            const notes = JSON.parse(localStorage.getItem('my_notes') || '[]');
+            notes.push(note);
+            localStorage.setItem('my_notes', JSON.stringify(notes));
+            
+            createNoteUI(e.currentTarget, note);
+        }
+
+        function createNoteUI(parent, note) {
+            const el = document.createElement('div');
+            el.className = 'sticky-note';
+            el.style.left = note.x + 'px';
+            el.style.top = note.y + 'px';
+            el.innerHTML = `
+                <textarea class="w-full h-full bg-transparent border-none outline-none resize-none" placeholder="Note...">${note.text}</textarea>
+                <button onclick="this.parentElement.remove()" class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 text-xs">X</button>
+            `;
+            
+            el.querySelector('textarea').onblur = (e) => {
+                const notes = JSON.parse(localStorage.getItem('my_notes') || '[]');
+                const found = notes.find(n => n.id === note.id);
+                if (found) found.text = e.target.value;
+                localStorage.setItem('my_notes', JSON.stringify(notes));
+            };
+
+            parent.appendChild(el);
+        }
+
+        function loadNotes(parent, bookId, pageIdx) {
+            const notes = JSON.parse(localStorage.getItem('my_notes') || '[]');
+            notes.filter(n => n.bookId === bookId && n.page === pageIdx)
+                 .forEach(n => createNoteUI(parent, n));
+        }
+
+        // --- INIT ---
+        document.getElementById('file-input').onchange = (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function() {
+                saveBook(file.name, this.result);
+            };
+            reader.readAsDataURL(file);
         };
+
+        renderBookshelf();
     </script>
 </body>
 </html>
