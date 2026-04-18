@@ -3,42 +3,46 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Pro Viewer - Industrial Grade</title>
+    <title>3D Pro Viewer - Auto-Layout Edition</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
     <script src="https://unpkg.com/page-flip/dist/js/page-flip.browser.js"></script>
     <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #0f172a; color: white; font-family: sans-serif; }
-        .shelf-item { background: #1e293b; padding: 20px; border-radius: 8px; border: 1px solid #334155; transition: 0.2s; cursor: pointer; }
-        .shelf-item:hover { background: #334155; transform: translateY(-5px); }
-        #book-container { width: 95vw; height: 80vh; margin: auto; display: flex; justify-content: center; }
-        canvas { background: white; box-shadow: 0 10px 40px rgba(0,0,0,0.6); }
-        .page { position: relative; }
+        body { background: #020617; color: #f1f5f9; font-family: sans-serif; overflow: hidden; }
+        #book-container { 
+            width: 100vw; 
+            height: 85vh; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            perspective: 2000px; /* Enhanced 3D depth */
+        }
+        canvas { 
+            background: white; 
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8); 
+        }
+        /* Style for the "Spine" look */
+        .page { background-color: #eee; }
+        .shelf-item { background: #1e293b; border: 1px solid #334155; border-radius: 4px; cursor: pointer; }
     </style>
 </head>
 <body>
 
-    <div id="view-shelf" class="p-10">
-        <h1 class="text-3xl font-bold mb-2 text-slate-100">Pro Document Library</h1>
-        <p class="text-slate-400 mb-8 font-mono text-sm">Industrial Storage Enabled (IndexedDB)</p>
-        
-        <div class="mb-10">
-            <label class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-md cursor-pointer font-bold shadow-lg">
-                + ADD PDF TO SHELF
-                <input type="file" id="file-input" accept="application/pdf" class="hidden">
-            </label>
-        </div>
-
-        <div id="shelf-list" class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6">
-            </div>
+    <div id="view-shelf" class="p-10 h-screen overflow-y-auto">
+        <h1 class="text-3xl font-bold border-b border-slate-800 pb-4 mb-8">Industrial 3D Library</h1>
+        <label class="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded font-bold cursor-pointer inline-block mb-10">
+            + UPLOAD PDF
+            <input type="file" id="file-input" accept="application/pdf" class="hidden">
+        </label>
+        <div id="shelf-list" class="grid grid-cols-2 md:grid-cols-5 gap-6"></div>
     </div>
 
-    <div id="view-reader" class="hidden flex flex-col items-center h-screen bg-black">
-        <div class="w-full bg-slate-900 p-4 flex justify-between items-center border-b border-slate-800">
-            <button onclick="location.reload()" class="bg-slate-700 px-4 py-2 rounded text-sm hover:bg-slate-600">← EXIT TO SHELF</button>
-            <h2 id="reader-title" class="font-bold truncate max-w-xs"></h2>
-            <span class="text-xs text-slate-500">Tap page to add note</span>
+    <div id="view-reader" class="hidden h-screen flex flex-col">
+        <div class="bg-slate-900 p-4 border-b border-slate-800 flex justify-between items-center">
+            <button onclick="location.reload()" class="text-slate-400 hover:text-white font-bold text-sm">← CLOSE</button>
+            <span id="page-indicator" class="text-xs font-mono text-slate-500 uppercase tracking-widest">3D Rendering Mode</span>
+            <div class="w-20"></div>
         </div>
         <div id="book-container">
             <div id="flipbook"></div>
@@ -46,67 +50,55 @@
     </div>
 
     <script>
-        // 1. INITIALIZE HEAVY-DUTY DATABASE
         const db = new Dexie("ProFlipbookDB");
-        db.version(1).stores({
-            books: "++id, name, data",
-            notes: "++id, bookId, page, text, x, y"
-        });
+        db.version(1).stores({ books: "++id, name, data" });
 
-        const shelfList = document.getElementById('shelf-list');
         const fileInput = document.getElementById('file-input');
+        const shelfList = document.getElementById('shelf-list');
 
-        // 2. RENDER THE SHELF
-        async function refreshShelf() {
+        async function renderShelf() {
             const books = await db.books.toArray();
             shelfList.innerHTML = books.map(b => `
-                <div class="shelf-item" onclick="openBook(${b.id})">
-                    <div class="text-4xl mb-3">📘</div>
-                    <div class="font-bold text-sm truncate">${b.name}</div>
-                    <button onclick="event.stopPropagation(); deleteBook(${b.id})" class="mt-4 text-xs text-red-400 hover:text-red-200">Remove</button>
+                <div class="shelf-item p-4" onclick="openBook(${b.id})">
+                    <div class="aspect-[3/4] bg-slate-800 mb-2 rounded shadow-inner flex items-center justify-center text-slate-600 italic">PDF</div>
+                    <div class="text-xs font-bold truncate">${b.name}</div>
                 </div>
             `).join('');
         }
 
-        // 3. UPLOAD LOGIC (Now handles large files)
         fileInput.onchange = async (e) => {
             const file = e.target.files[0];
             if (!file) return;
-
             const reader = new FileReader();
             reader.onload = async function() {
-                try {
-                    await db.books.add({ name: file.name, data: this.result });
-                    refreshShelf();
-                } catch (err) {
-                    alert("Storage Error: " + err);
-                }
+                await db.books.add({ name: file.name, data: this.result });
+                renderShelf();
             };
             reader.readAsArrayBuffer(file);
         };
 
-        async function deleteBook(id) {
-            if(confirm("Delete this book?")) {
-                await db.books.delete(id);
-                await db.notes.where('bookId').equals(id).delete();
-                refreshShelf();
-            }
-        }
-
-        // 4. OPEN BOOK LOGIC
         async function openBook(id) {
             const book = await db.books.get(id);
             document.getElementById('view-shelf').classList.add('hidden');
             document.getElementById('view-reader').classList.remove('hidden');
-            document.getElementById('reader-title').innerText = book.name;
 
             const pdfData = new Uint8Array(book.data);
             const pdf = await pdfjsLib.getDocument({data: pdfData}).promise;
             const flipbookEl = document.getElementById('flipbook');
 
+            // 1. DETECTION LOGIC: Get the first page to determine layout
+            const firstPage = await pdf.getPage(1);
+            const initialViewport = firstPage.getViewport({ scale: 1 });
+            const isLandscape = initialViewport.width > initialViewport.height;
+            
+            // Set dimensions based on detected format
+            let bookWidth = isLandscape ? 800 : 550;
+            let bookHeight = isLandscape ? 600 : 800;
+
+            // 2. RENDER PAGES
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
-                const viewport = page.getViewport({ scale: 1.5 });
+                const viewport = page.getViewport({ scale: 2 });
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
@@ -119,13 +111,23 @@
                 flipbookEl.appendChild(pageDiv);
             }
 
+            // 3. ENHANCED 3D SETTINGS
             const pageFlip = new St.PageFlip(flipbookEl, {
-                width: 550, height: 750, size: "stretch", showCover: true
+                width: bookWidth,
+                height: bookHeight,
+                size: "stretch",
+                showCover: true,
+                maxShadowOpacity: 0.8,      // Darker shadows for 3D realism
+                flippingTime: 1000,         // Smoother, weightier flip
+                drawShadow: true,           // Ensures 3D shadows are visible
+                usePortrait: !isLandscape,  // Auto-switch view mode
+                startPage: 0
             });
+
             pageFlip.loadFromHTML(document.querySelectorAll(".page"));
         }
 
-        refreshShelf();
+        renderShelf();
     </script>
 </body>
 </html>
